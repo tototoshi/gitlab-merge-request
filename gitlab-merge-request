@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# Check if jq is installed
+if ! type "jq" > /dev/null; then
+    echo please install jq
+fi
+
+title="$(git log --oneline | head -1 | cut -f 2- -d ' ')"
+source_branch="$(git branch | grep '*' | cut -f 2 -d ' ')"
+target_branch=master
+description=
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --source-branch)
+            source_branch="$2"
+            shift
+            shift
+            ;;
+        --target-branch)
+            target_branch="$2"
+            shift
+            shift
+            ;;
+        --title)
+            title="$2"
+            shift
+            shift
+            ;;
+        --description)
+            description="$2"
+            shift
+            shift
+            ;;
+        -h)
+            echo "Useage:"
+            echo "  $ git merge-request [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --source-branch    Source branch of the merge request. (default: current barnch)"
+            echo "  --target-branch    Target branch of the merge request. (default: master)"
+            echo "  --title            Title of the merge request. (default: first line of last commit log)"
+            echo ""
+            exit 0
+            ;;
+    esac
+done
+
+
+gitlab_url="$(git config --get gitlab.url)"
+if [ "$gitlab_url" == "" ]; then
+    echo "Gitlab url is not set"
+    echo "  $ git config --local --add gitlab.url <url>"
+    exit 1
+fi
+
+project_id="$(git config --get gitlab.id)"
+if [ "$project_id" == "" ]; then
+    echo "Project id is not set"
+    echo "  $ git config --local --add gitlab.id <id>"
+    exit 1
+fi
+
+repo="$(git config --get gitlab.repo)"
+if [ "$repo" == "" ]; then
+    echo "Repository name is not set"
+    echo "  $ git config --local --add gitlab.repo <repository_namespace>/<repository_name>"
+    exit 1
+fi
+
+private_token="$(git config --get gitlab.privatetoken)"
+if [ "$private_token" == "" ]; then
+    echo "Private token is not set"
+    echo "  $ git config --local --add gitlab.privatetoken <private token>"
+    exit 1
+fi
+
+remote="$(git config --get gitlab.remote)"
+if [ "$remote" == "" ]; then
+    remote=origin
+fi
+
+if ! git push -u ${remote} ${source_branch}; then
+    echo "Failed to push ${target_branch}"
+    exit 1
+fi
+
+merge_request_id=$(curl \
+  -s \
+  --header "PRIVATE-TOKEN: $private_token" \
+  -d source_branch="${source_branch}" \
+  -d target_branch="${target_branch}" \
+  -d title="${title}" \
+  "${gitlab_url}/api/v3/projects/${project_id}/merge_requests" \
+    | jq '.iid')
+
+if type "open" > /dev/null; then
+    open "${gitlab_url}/${repo}/merge_requests/${merge_request_id}"
+fi
